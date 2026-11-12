@@ -17,9 +17,31 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.*
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import kotlin.coroutines.resume
+
+// 全局诊断日志记录器
+object ExtractLogger {
+    private val logs = Collections.synchronizedList(mutableListOf<String>())
+    private val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+
+    fun clear() {
+        logs.clear()
+    }
+
+    fun log(tag: String, msg: String) {
+        val line = "[${fmt.format(Date())}][$tag] $msg"
+        logs.add(line)
+        if (logs.size > 200) logs.removeAt(0)
+    }
+
+    fun dump(): String {
+        return if (logs.isEmpty()) "暂无日志记录" else logs.joinToString("\n")
+    }
+}
 
 object WebArticleParser {
     private const val DESKTOP_UA =
@@ -39,6 +61,7 @@ object WebArticleParser {
     }
 
     fun extractArticleText(url: String): String {
+        ExtractLogger.log("Article", "开始请求文章 URL: $url")
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", DESKTOP_UA)
@@ -47,15 +70,44 @@ object WebArticleParser {
         val article = Readability4J(url, html).parse()
         val title = article.title ?: ""
         val content = article.textContent?.trim() ?: ""
+        ExtractLogger.log("Article", "文章提取完成，字数: ${content.length}")
         return if (title.isNotEmpty()) "【$title】\n\n$content" else content
     }
 
     suspend fun downloadVideoFromLink(context: Context, shareText: String): File? {
-        val targetUrl = extractUrl(shareText) ?: return null
+        ExtractLogger.clear()
+        ExtractLogger.log("Link", "原始输入文本: ${shareText.take(80)}")
+        val targetUrl = extractUrl(shareText)
+        if (targetUrl == null) {
+            ExtractLogger.log("Link", "错误：未能从输入中解析出有效 http 链接")
+            return null
+        }
+        ExtractLogger.log("Link", "提取出目标 URL: $targetUrl")
+
         if (targetUrl.contains("weixin.qq.com") || targetUrl.contains("channels")) {
+            ExtractLogger.log("Link", "识别为微信视频号链接，外部无法加载")
             return null
         }
         return extractVideoWithWebView(context, targetUrl)
+    }
+
+    // 校验文件头及最小体积（过滤 80KB 以下初始化空壳与 HTML/JSON 错误页）
+    private fun isValidMediaFile(file: File): Boolean {
+        if (!file.exists() || file.length() < 80 * 1024) return false
+        return try {
+            val header = ByteArray(32)
+            val read = file.inputStream().use { it.read(header) }
+            if (read < 8) return false
+            val headStr = String(header, 0, read, Charsets.ISO_8859_1).trimStart()
+            if (headStr.startsWith("<") || headStr.startsWith("{") || headStr.contains("html", ignoreCase = true)) {
+                ExtractLogger.log("Verify", "拦截到伪装成媒体的 HTML/JSON 错误响应，前32字节: ${headStr.take(30)}")
+                false
+            } else {
+                true
+            }
+        } catch (e: Exception) {
+            false
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
@@ -77,7 +129,7 @@ object WebArticleParser {
             }
 
             val tipText = TextView(context).apply {
-                text = "正在加载网页并识别人声音频流...\n（如遇滑块、登录或视频未自动播放，请直接在下方点击画面播放）"
+                text = "正在加载网页并自动激活播放器捕获人声...\n（支持双指自由缩放，如遇滑块/登录请直接操作）"
                 textSize = 13f
                 setPadding(0, 0, 0, 16)
             }
@@ -87,6 +139,7 @@ object WebArticleParser {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     (context.resources.displayMetrics.heightPixels * 0.58).toInt()
                 )
+                setInitialScale(65)
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -122,7 +175,13 @@ object WebArticleParser {
 
             webView.addJavascriptInterface(object {
                 @JavascriptInterface
+                fun onLog(msg: String) {
+                    ExtractLogger.log("WebViewJS", msg)
+                }
+
+                @JavascriptInterface
                 fun onStatus(msg: String) {
+                    ExtractLogger.log("Status", msg)
                     Handler(Looper.getMainLooper()).post {
                         tipText.text = msg
                     }
@@ -146,7 +205,7 @@ object WebArticleParser {
                         val bytes = Base64.decode(base64Chunk, Base64.DEFAULT)
                         fileStream?.write(bytes)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        ExtractLogger.log("ChunkErr", e.message ?: "decode error")
                     }
                 }
 
@@ -155,10 +214,13 @@ object WebArticleParser {
                     Handler(Looper.getMainLooper()).post {
                         try { fileStream?.flush(); fileStream?.close() } catch (_: Exception) {}
                         fileStream = null
-                        // 必须大于 30KB 才视为有效完整流（过滤初始化空头）
-                        if (currentFile.exists() && currentFile.length() > 30 * 1024) {
+                        val size = if (currentFile.exists()) currentFile.length() else 0L
+                        ExtractLogger.log("Download", "分片写入结束，文件实际大小: ${size} bytes (${size / 1024} KB)")
+                        if (isValidMediaFile(currentFile)) {
+                            ExtractLogger.log("Download", "文件头与体积校验通过 (>80KB)，进入音轨提取")
                             finishWith(currentFile)
                         } else {
+                            ExtractLogger.log("Download", "文件过小 (<80KB 初始化头) 或非媒体文件，已丢弃并继续扫描")
                             currentFile.delete()
                         }
                     }
@@ -169,6 +231,7 @@ object WebArticleParser {
                     try { fileStream?.close() } catch (_: Exception) {}
                     fileStream = null
                     currentFile.delete()
+                    ExtractLogger.log("DownloadErr", err)
                     Handler(Looper.getMainLooper()).post {
                         tipText.text = "正在切换下一条媒体流 ($err)..."
                     }
@@ -179,26 +242,58 @@ object WebArticleParser {
                 .setTitle("音视频提取窗口")
                 .setView(container)
                 .setNegativeButton("取消提取") { _, _ ->
+                    ExtractLogger.log("User", "用户手动取消了提取窗口")
                     currentFile.delete()
                     finishWith(null)
                 }
                 .setOnCancelListener {
+                    ExtractLogger.log("User", "用户关闭了提取窗口")
                     currentFile.delete()
                     finishWith(null)
                 }
                 .create()
 
-            // 已在本地模拟测试通过的流筛选与下载脚本
             val injectScript = """
                 (function() {
                     if (window.__tmInjected) return;
                     window.__tmInjected = true;
                     window.__tmDownloading = false;
                     window.__tmTriedUrls = new Set();
+                    window.__lastScanCount = -1;
+                    window.__dashWaitTicks = 0;
 
                     try {
                         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
                     } catch(e) {}
+
+                    function unlockViewportZoom() {
+                        try {
+                            let meta = document.querySelector('meta[name="viewport"]');
+                            if (!meta) {
+                                meta = document.createElement('meta');
+                                meta.name = 'viewport';
+                                document.head.appendChild(meta);
+                            }
+                            meta.setAttribute('content', 'width=device-width, initial-scale=0.65, minimum-scale=0.25, maximum-scale=5.0, user-scalable=yes');
+                        } catch (e) {}
+                    }
+                    unlockViewportZoom();
+
+                    function forceActivatePlayer() {
+                        try {
+                            document.querySelectorAll('video').forEach(v => {
+                                if (v.paused) {
+                                    v.muted = true;
+                                    v.play().then(() => { v.muted = false; }).catch(() => {});
+                                }
+                            });
+                            const playBtn = document.querySelector('.xgplayer-start, .play-btn, [class*="play-icon"], [aria-label="播放"]');
+                            if (playBtn && !window.__clickedPlay) {
+                                window.__clickedPlay = true;
+                                playBtn.click();
+                            }
+                        } catch (e) {}
+                    }
 
                     function getCandidates() {
                         const audioList = [];
@@ -241,26 +336,39 @@ object WebArticleParser {
                             }
                         });
 
-                        return [...new Set([...audioList, ...videoList])];
+                        const merged = [...new Set([...audioList, ...videoList])];
+                        if (merged.length !== window.__lastScanCount) {
+                            window.__lastScanCount = merged.length;
+                            AndroidBridge.onLog("候选流更新: 总数=" + merged.length + " (独立音频=" + audioList.length + ", 视频=" + videoList.length + ")");
+                        }
+                        return { audioList: [...new Set(audioList)], videoList: [...new Set(videoList)] };
                     }
 
-                    async function tryFetchAndSave(url) {
+                    async function tryFetchAndSave(url, isExplicitAudio) {
                         if (window.__tmDownloading || window.__tmTriedUrls.has(url)) return;
                         window.__tmTriedUrls.add(url);
 
                         try {
                             const head = await fetch(url, { method: 'HEAD' });
-                            if (!head.ok) return;
                             const type = head.headers.get('content-type') || '';
                             const len = parseInt(head.headers.get('content-length') || '0', 10);
+                            AndroidBridge.onLog("探测 [" + head.status + "] type=" + type + " len=" + len + " url=" + url.slice(0, 65));
 
-                            if (len > 30 * 1024 || /video|audio|octet-stream/i.test(type)) {
+                            if (!head.ok) return;
+                            if (/text\/html|application\/json/i.test(type)) return;
+
+                            if (len > 0 && len < 80 * 1024) {
+                                AndroidBridge.onLog("跳过小分片 (<80KB): " + len + " bytes");
+                                return;
+                            }
+
+                            if (len >= 80 * 1024 || /video|audio|octet-stream/i.test(type)) {
                                 window.__tmDownloading = true;
                                 AndroidBridge.onStartNewFile();
-                                const isAudio = /audio/i.test(type) || /mime_type=audio|\.m4a/i.test(url);
+                                const isAudio = isExplicitAudio || /audio/i.test(type);
                                 const label = isAudio ? "人声音频流" : "完整音视频流";
                                 const kb = len > 0 ? (len / 1024).toFixed(0) + 'KB' : '未知大小';
-                                AndroidBridge.onStatus("已锁定" + label + " (" + kb + ")，正在下载并离线转写...");
+                                AndroidBridge.onStatus("已锁定" + label + " (" + kb + ")，正在下载...");
 
                                 const resp = await fetch(url);
                                 if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -280,30 +388,55 @@ object WebArticleParser {
                             }
                         } catch (err) {
                             window.__tmDownloading = false;
-                            AndroidBridge.onDownloadError(err.message || "fetch error");
+                            AndroidBridge.onDownloadError((err.message || "fetch error") + " | " + url.slice(0, 50));
                         }
                     }
 
                     setInterval(async () => {
+                        unlockViewportZoom();
+                        forceActivatePlayer();
                         if (window.__tmDownloading) return;
-                        const list = getCandidates();
-                        const hasAudio = list.some(u => /mime_type=audio|\.m4a|audio/i.test(u));
-                        // 首次发现纯视频流时等待 1.5 秒，给紧随其后加载的 DASH 独立音频流留出出现时间
-                        if (!hasAudio && list.length > 0 && (window.__waitCount = (window.__waitCount || 0) + 1) <= 2) {
+
+                        const { audioList, videoList } = getCandidates();
+
+                        if (audioList.length > 0) {
+                            for (const u of audioList) {
+                                if (window.__tmDownloading) break;
+                                await tryFetchAndSave(u, true);
+                            }
                             return;
                         }
-                        for (const u of list) {
-                            if (window.__tmDownloading) break;
-                            await tryFetchAndSave(u);
+
+                        if (videoList.length > 0) {
+                            window.__dashWaitTicks++;
+                            if (window.__dashWaitTicks <= 4) {
+                                AndroidBridge.onStatus("已检测到画面流，正在等待人声音轨加载 (" + window.__dashWaitTicks + "/4)...");
+                                return;
+                            }
+                            for (const u of videoList) {
+                                if (window.__tmDownloading) break;
+                                await tryFetchAndSave(u, false);
+                            }
                         }
                     }, 900);
                 })();
             """.trimIndent()
 
             webView.webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    ExtractLogger.log("WebView", "开始加载页面: $url")
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    ExtractLogger.log("WebView", "页面加载完成: $url")
                     view?.evaluateJavascript(injectScript, null)
+                }
+
+                override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                    if (request?.isForMainFrame == true) {
+                        ExtractLogger.log("WebViewErr", "主页面加载报错: ${error?.description}")
+                    }
                 }
             }
 
