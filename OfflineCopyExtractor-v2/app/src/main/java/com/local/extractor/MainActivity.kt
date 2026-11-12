@@ -105,7 +105,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // 先打开可视化小窗嗅探，避免全屏 loading 遮挡滑块/登录操作
         lifecycleScope.launch(Dispatchers.IO) {
             val videoFile = WebArticleParser.downloadVideoFromLink(this@MainActivity, rawText)
             withContext(Dispatchers.Main) {
@@ -113,16 +112,20 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this@MainActivity, "已取消或未获取到视频流", Toast.LENGTH_SHORT).show()
                     return@withContext
                 }
-                val loading = showLoading("已捕获视频流，正在本地离线转写...")
+                val loading = showLoading("已捕获音视频流，正在本地离线转写...")
                 launch(Dispatchers.IO) {
                     val wavFile = MediaAudioExtractor.extractTo16kWav(this@MainActivity, Uri.fromFile(videoFile))
                     videoFile.delete()
                     val result = if (wavFile != null) {
-                        val text = asrEngine.transcribeWav(wavFile.absolutePath)
+                        val text = asrEngine.transcribeWav(wavFile.absolutePath).trim()
                         wavFile.delete()
-                        text
+                        if (text.isEmpty() || text == "." || text == "。") {
+                            "未识别到有效人声（可能抓到了无声画面流或该视频无配音），请重试或先保存到相册后使用「视频转文字」。"
+                        } else {
+                            text
+                        }
                     } else {
-                        "音轨解析失败"
+                        "该媒体流不含音轨（DASH 纯视频流），请重试或先保存到相册后使用「视频转文字」。"
                     }
                     withContext(Dispatchers.Main) {
                         loading.dismiss()
