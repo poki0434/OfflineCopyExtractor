@@ -10,10 +10,12 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.abs
 
 object MediaAudioExtractor {
     fun extractTo16kWav(context: Context, inputUri: Uri): File? {
         val extractor = MediaExtractor()
+        var codec: MediaCodec? = null
         try {
             extractor.setDataSource(context, inputUri, null)
             var audioTrackIndex = -1
@@ -27,61 +29,84 @@ object MediaAudioExtractor {
                     break
                 }
             }
-            if (audioTrackIndex == -1 || inputFormat == null) return null
+            if (audioTrackIndex == -1 || inputFormat == null) {
+                ExtractLogger.log("Extractor", "未找到 audio/ 音轨")
+                return null
+            }
 
             extractor.selectTrack(audioTrackIndex)
             val mime = inputFormat.getString(MediaFormat.KEY_MIME)!!
-            val sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            val channelCount = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            var sampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            var channelCount = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            ExtractLogger.log("Extractor", "音轨格式: mime=$mime, rate=$sampleRate, ch=$channelCount")
 
-            val codec = MediaCodec.createDecoderByType(mime)
+            codec = MediaCodec.createDecoderByType(mime)
             codec.configure(inputFormat, null, null, 0)
             codec.start()
 
             val pcmOut = ByteArrayOutputStream()
             val bufferInfo = MediaCodec.BufferInfo()
-            var isEOS = false
+            var isInputEOS = false
+            var isOutputEOS = false
 
-            while (!isEOS) {
-                val inIndex = codec.dequeueInputBuffer(10000)
-                if (inIndex >= 0) {
-                    val inputBuffer = codec.getInputBuffer(inIndex)!!
-                    val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                    if (sampleSize < 0) {
-                        codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                        isEOS = true
-                    } else {
-                        codec.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
-                        extractor.advance()
+            while (!isOutputEOS) {
+                if (!isInputEOS) {
+                    val inIndex = codec.dequeueInputBuffer(10000)
+                    if (inIndex >= 0) {
+                        val inputBuffer = codec.getInputBuffer(inIndex)!!
+                        val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                        if (sampleSize < 0) {
+                            codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            isInputEOS = true
+                        } else {
+                            codec.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
                     }
                 }
 
-                var outIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
-                while (outIndex >= 0) {
+                val outIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
+                if (outIndex >= 0) {
                     val outputBuffer = codec.getOutputBuffer(outIndex)!!
-                    val chunk = ByteArray(bufferInfo.size)
-                    outputBuffer.get(chunk)
-                    outputBuffer.clear()
-                    pcmOut.write(chunk)
+                    if (bufferInfo.size > 0) {
+                        outputBuffer.position(bufferInfo.offset)
+                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                        val chunk = ByteArray(bufferInfo.size)
+                        outputBuffer.get(chunk)
+                        pcmOut.write(chunk)
+                    }
                     codec.releaseOutputBuffer(outIndex, false)
                     if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        isEOS = true
+                        isOutputEOS = true
                     }
-                    outIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+                } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    val outFmt = codec.outputFormat
+                    if (outFmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                        sampleRate = outFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    }
+                    if (outFmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                        channelCount = outFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    }
+                    ExtractLogger.log("Extractor", "解码实际输出格式变更: rate=$sampleRate, ch=$channelCount")
                 }
             }
 
-            codec.stop()
-            codec.release()
-            extractor.release()
+            val rawPcm = pcmOut.toByteArray()
+            if (rawPcm.isEmpty()) {
+                ExtractLogger.log("Extractor", "解码后 PCM 数据为空")
+                return null
+            }
 
-            val resampledPcm = resampleTo16kMono(pcmOut.toByteArray(), sampleRate, channelCount)
+            val resampledPcm = resampleTo16kMono(rawPcm, sampleRate, channelCount)
             val outWav = File(context.cacheDir, "audio_${System.currentTimeMillis()}.wav")
             writeWavFile(outWav, resampledPcm, 16000, 1)
             return outWav
         } catch (e: Exception) {
-            e.printStackTrace()
+            ExtractLogger.log("ExtractorErr", e.stackTraceToString())
             return null
+        } finally {
+            try { codec?.stop(); codec?.release() } catch (_: Exception) {}
+            try { extractor.release() } catch (_: Exception) {}
         }
     }
 
@@ -100,10 +125,19 @@ object MediaAudioExtractor {
         val ratio = srcRate.toDouble() / 16000.0
         val outLength = (totalSamples / ratio).toInt()
         val outBytes = ByteBuffer.allocate(outLength * 2).order(ByteOrder.LITTLE_ENDIAN)
+        var maxAmp = 0
+
         for (i in 0 until outLength) {
-            val srcIdx = (i * ratio).toInt().coerceAtMost(totalSamples - 1)
-            outBytes.putShort(monoSamples[srcIdx])
+            val srcPos = i * ratio
+            val idx0 = srcPos.toInt().coerceIn(0, totalSamples - 1)
+            val idx1 = (idx0 + 1).coerceIn(0, totalSamples - 1)
+            val frac = srcPos - idx0
+            val sample = ((monoSamples[idx0] * (1.0 - frac)) + (monoSamples[idx1] * frac)).toInt().toShort()
+            val amp = abs(sample.toInt())
+            if (amp > maxAmp) maxAmp = amp
+            outBytes.putShort(sample)
         }
+        ExtractLogger.log("Extractor", "重采样完成: 采样点=$outLength, 最大音量振幅=$maxAmp/32767")
         return outBytes.array()
     }
 
