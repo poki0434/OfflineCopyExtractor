@@ -34,17 +34,37 @@ class AsrEngine(private val context: Context) {
     fun transcribeWav(wavPath: String): String {
         initModel()
         val samples = readWavToFloatArray(wavPath)
-        val stream = recognizer!!.createStream()
-        stream.acceptWaveform(samples, 16000)
-        recognizer!!.decode(stream)
-        val result = recognizer!!.getResult(stream).text
-        stream.release()
-        return result.trim()
+        if (samples.isEmpty()) return ""
+
+        // 按每段 20 秒（320,000 采样点）切片识别，防止长音频超出 SenseVoice 单次编码窗口导致只输出 "."
+        val chunkSize = 16000 * 20
+        val sb = StringBuilder()
+        var offset = 0
+        var segIdx = 0
+
+        while (offset < samples.size) {
+            val end = minOf(offset + chunkSize, samples.size)
+            val slice = samples.copyOfRange(offset, end)
+            val stream = recognizer!!.createStream()
+            stream.acceptWaveform(slice, 16000)
+            recognizer!!.decode(stream)
+            val segText = recognizer!!.getResult(stream).text.trim()
+            stream.release()
+
+            segIdx++
+            ExtractLogger.log("ASR", "第${segIdx}段(${(end - offset) / 16000}s)识别: [$segText]")
+            if (segText.isNotEmpty() && segText != "." && segText != "。") {
+                sb.append(segText)
+            }
+            offset = end
+        }
+        return sb.toString().trim()
     }
 
     private fun readWavToFloatArray(path: String): FloatArray {
         val file = File(path)
         val bytes = FileInputStream(file).use { it.readBytes() }
+        if (bytes.size <= 44) return FloatArray(0)
         val pcmBytes = bytes.copyOfRange(44, bytes.size)
         val shortBuffer = ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
         val floatArray = FloatArray(shortBuffer.limit())
