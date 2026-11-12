@@ -72,7 +72,5 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("net.dankito.readability4j:readability4j:1.0.8")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
-
-    // 直接加载本地 libs 目录下的 sherpa-onnx 包
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
 }

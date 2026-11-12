@@ -50,7 +50,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val btnBack = TextView(this).apply {
-            text = "← 返回"
+            this.text = "← 返回"
             textSize = 15f
             setTextColor(Color.parseColor("#1A73E8"))
             setPadding(0, 8, 24, 8)
@@ -60,7 +60,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val titleView = TextView(this).apply {
-            text = "提取历史记录"
+            this.text = "提取历史记录"
             textSize = 17f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#1F2329"))
@@ -68,7 +68,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         btnMultiToggle = TextView(this).apply {
-            text = "多选"
+            this.text = "多选"
             textSize = 14f
             setTextColor(Color.parseColor("#1A73E8"))
             setPadding(20, 8, 20, 8)
@@ -78,7 +78,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val btnClear = TextView(this).apply {
-            text = "清空"
+            this.text = "清空"
             textSize = 14f
             setTextColor(Color.parseColor("#D93025"))
             setPadding(16, 8, 0, 8)
@@ -133,7 +133,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val btnSelectAll = TextView(this).apply {
-            text = "全选"
+            this.text = "全选"
             textSize = 14f
             setTextColor(Color.parseColor("#1A73E8"))
             setPadding(8, 12, 24, 12)
@@ -148,14 +148,14 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         tvSelectedCount = TextView(this).apply {
-            text = "已选 0 项"
+            this.text = "已选 0 项"
             textSize = 13f
             setTextColor(Color.parseColor("#646A73"))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val btnBatchDelete = Button(this).apply {
-            text = "删除"
+            this.text = "删除"
             textSize = 13f
             setTextColor(Color.parseColor("#D93025"))
             setBackgroundColor(Color.parseColor("#FDECEC"))
@@ -174,7 +174,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val btnBatchExport = Button(this).apply {
-            text = "导出文档"
+            this.text = "导出文档"
             textSize = 13f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#1A73E8"))
@@ -219,7 +219,7 @@ class HistoryActivity : AppCompatActivity() {
         for (cat in categories) {
             val active = (cat == currentCategory)
             val chip = TextView(this).apply {
-                text = cat
+                this.text = cat
                 textSize = 13f
                 setTypeface(null, if (active) Typeface.BOLD else Typeface.NORMAL)
                 setTextColor(if (active) Color.WHITE else Color.parseColor("#4E5969"))
@@ -257,7 +257,7 @@ class HistoryActivity : AppCompatActivity() {
 
         if (currentFilteredItems.isEmpty()) {
             val emptyView = TextView(this).apply {
-                text = "当前分类下暂无历史记录"
+                this.text = "当前分类下暂无历史记录"
                 textSize = 14f
                 setTextColor(Color.parseColor("#8F959E"))
                 gravity = Gravity.CENTER
@@ -300,14 +300,14 @@ class HistoryActivity : AppCompatActivity() {
             }
 
             val timeTitle = TextView(this).apply {
-                text = "${item.time}  ·  ${item.type}"
+                this.text = "${item.time}  ·  ${item.type}"
                 textSize = 14f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.parseColor("#1F2329"))
             }
 
             val sourcePreview = TextView(this).apply {
-                text = item.sourceInfo
+                this.text = item.sourceInfo
                 textSize = 12f
                 setTextColor(Color.parseColor("#86909C"))
                 maxLines = 1
@@ -316,7 +316,7 @@ class HistoryActivity : AppCompatActivity() {
             }
 
             val contentPreview = TextView(this).apply {
-                text = item.content
+                this.text = item.content
                 textSize = 13.5f
                 setTextColor(Color.parseColor("#373C43"))
                 maxLines = 2
@@ -355,7 +355,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val timeLine = TextView(this).apply {
-            text = "识别时间：${item.time}   |   ${item.type}"
+            this.text = "识别时间：${item.time}   |   ${item.type}"
             textSize = 11.5f
             setTextColor(Color.parseColor("#86909C"))
             maxLines = 1
@@ -389,7 +389,7 @@ class HistoryActivity : AppCompatActivity() {
                 ).apply { bottomMargin = 20 }
 
                 val header = TextView(this@HistoryActivity).apply {
-                    text = "$title（长按此板块复制）"
+                    this.text = "$title（长按此板块复制）"
                     textSize = 12f
                     setTypeface(null, Typeface.BOLD)
                     setTextColor(Color.parseColor("#1A73E8"))
@@ -397,7 +397,7 @@ class HistoryActivity : AppCompatActivity() {
                 }
 
                 val contentTv = TextView(this@HistoryActivity).apply {
-                    text = body
+                    this.text = body
                     textSize = if (isMain) 14.5f else 12.5f
                     setTextColor(Color.parseColor("#1F2329"))
                     setLineSpacing(6f, 1.15f)
@@ -428,7 +428,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val btnExport = TextView(this).apply {
-            text = "导出文档"
+            this.text = "导出文档"
             textSize = 13.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#0F9D58"))
@@ -443,7 +443,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val btnCopyAll = TextView(this).apply {
-            text = "复制全部"
+            this.text = "复制全部"
             textSize = 13.5f
             setTextColor(Color.parseColor("#4E5969"))
             setPadding(20, 16, 24, 16)
@@ -454,7 +454,7 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         val btnCopyMain = TextView(this).apply {
-            text = "一键复制正文"
+            this.text = "一键复制正文"
             textSize = 13.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
