@@ -18,12 +18,21 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 3. 下载 SenseVoice 离线语音模型
+      - name: 3. 自动定位工程根目录并下载 SenseVoice 模型
         run: |
           python3 - << 'EOF'
           import os, urllib.request, json, tarfile, shutil
 
-          os.makedirs("app/src/main/assets/sensevoice", exist_ok=True)
+          # 自动查找包含 settings.gradle.kts 的真实工程目录
+          project_root = "."
+          for root, dirs, files in os.walk("."):
+              if "settings.gradle.kts" in files:
+                  project_root = root
+                  break
+          print("Detected project root:", project_root)
+
+          assets_dir = os.path.join(project_root, "app/src/main/assets/sensevoice")
+          os.makedirs(assets_dir, exist_ok=True)
 
           req = urllib.request.Request("https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/tags/asr-models", headers={"User-Agent": "Mozilla/5.0"})
           data = json.loads(urllib.request.urlopen(req).read().decode())
@@ -34,13 +43,16 @@ jobs:
           with tarfile.open("model.tar.bz2", "r:bz2") as tar:
               tar.extractall(".")
           extracted_dir = [d for d in os.listdir(".") if os.path.isdir(d) and "sense-voice" in d][0]
-          shutil.copy(os.path.join(extracted_dir, "model.int8.onnx"), "app/src/main/assets/sensevoice/model.int8.onnx")
-          shutil.copy(os.path.join(extracted_dir, "tokens.txt"), "app/src/main/assets/sensevoice/tokens.txt")
-          print("Model ready!")
+          shutil.copy(os.path.join(extracted_dir, "model.int8.onnx"), os.path.join(assets_dir, "model.int8.onnx"))
+          shutil.copy(os.path.join(extracted_dir, "tokens.txt"), os.path.join(assets_dir, "tokens.txt"))
+          print("Model ready in:", assets_dir)
           EOF
 
       - name: 4. 生成 Gradle Wrapper 并编译 APK
         run: |
+          PROJECT_DIR=$(dirname $(find . -name "settings.gradle.kts" | head -n 1))
+          echo "Building in directory: $PROJECT_DIR"
+          cd "$PROJECT_DIR"
           gradle wrapper --gradle-version 8.5
           chmod +x gradlew
           ./gradlew assembleDebug
@@ -49,4 +61,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OfflineCopyExtractor-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: "**/app/build/outputs/apk/debug/app-debug.apk"
