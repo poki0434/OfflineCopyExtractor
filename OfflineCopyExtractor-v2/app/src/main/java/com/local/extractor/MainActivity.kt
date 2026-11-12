@@ -216,7 +216,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val timeLine = TextView(this).apply {
-            text = "识别时间：$extractTime   |   $type"
+            this.text = "识别时间：$extractTime   |   $type"
             textSize = 11.5f
             setTextColor(Color.parseColor("#86909C"))
             maxLines = 1
@@ -250,7 +250,7 @@ class MainActivity : AppCompatActivity() {
                 ).apply { bottomMargin = 20 }
 
                 val header = TextView(this@MainActivity).apply {
-                    text = "$title（长按此板块复制）"
+                    this.text = "$title（长按此板块复制）"
                     textSize = 12f
                     setTypeface(null, Typeface.BOLD)
                     setTextColor(Color.parseColor("#1A73E8"))
@@ -258,7 +258,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val contentTv = TextView(this@MainActivity).apply {
-                    text = body
+                    this.text = body
                     textSize = if (isMain) 14.5f else 12.5f
                     setTextColor(Color.parseColor("#1F2329"))
                     setLineSpacing(6f, 1.15f)
@@ -289,7 +289,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnExport = TextView(this).apply {
-            text = "导出文档"
+            this.text = "导出文档"
             textSize = 13.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#0F9D58"))
@@ -304,7 +304,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnCopyAll = TextView(this).apply {
-            text = "复制全部"
+            this.text = "复制全部"
             textSize = 13.5f
             setTextColor(Color.parseColor("#4E5969"))
             setPadding(20, 16, 24, 16)
@@ -315,7 +315,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnCopyMain = TextView(this).apply {
-            text = "一键复制正文"
+            this.text = "一键复制正文"
             textSize = 13.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
