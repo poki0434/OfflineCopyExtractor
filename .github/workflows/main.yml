@@ -39,8 +39,30 @@ jobs:
           shutil.copy(os.path.join(extracted_dir, "model.int8.onnx"), "app/src/main/assets/sensevoice/model.int8.onnx")
           shutil.copy(os.path.join(extracted_dir, "tokens.txt"), "app/src/main/assets/sensevoice/tokens.txt")
 
-          # 2. 从 HuggingFace 官方镜像拉取已编译好的 sherpa-onnx Android AAR
-          aar_url = "https://huggingface.co/csukuangfj/sherpa-onnx-libs/resolve/main/android/sherpa-onnx-1.10.30.aar"
+          # 2. 通过 HuggingFace API 自动扫描并下载最新的 sherpa-onnx Android AAR
+          hf_api = "https://huggingface.co/api/models/csukuangfj/sherpa-onnx-libs/tree/main"
+          req_hf = urllib.request.Request(hf_api, headers={"User-Agent": "Mozilla/5.0"})
+          tree = json.loads(urllib.request.urlopen(req_hf).read().decode())
+
+          aar_path = None
+          for item in tree:
+              if item["type"] == "file" and item["path"].endswith(".aar"):
+                  aar_path = item["path"]
+                  break
+              elif item["type"] == "directory":
+                  sub_req = urllib.request.Request(f"{hf_api}/{item['path']}", headers={"User-Agent": "Mozilla/5.0"})
+                  sub_tree = json.loads(urllib.request.urlopen(sub_req).read().decode())
+                  for sub in sub_tree:
+                      if sub["type"] == "file" and sub["path"].endswith(".aar"):
+                          aar_path = sub["path"]
+                          break
+              if aar_path:
+                  break
+
+          if not aar_path:
+              raise RuntimeError("未找到 AAR 文件")
+
+          aar_url = f"https://huggingface.co/csukuangfj/sherpa-onnx-libs/resolve/main/{aar_path}"
           print("Downloading AAR:", aar_url)
           urllib.request.urlretrieve(aar_url, "app/libs/sherpa-onnx.aar")
           EOF
