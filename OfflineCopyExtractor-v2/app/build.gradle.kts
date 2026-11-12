@@ -41,17 +41,18 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("fixedRelease")
+        }
         getByName("release") {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("fixedRelease")
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
         }
-        getByName("debug") {
-            signingConfig = signingConfigs.getByName("fixedRelease")
-        }
+    }
+
+    androidResources {
+        noCompress += listOf("onnx", "txt")
     }
 
     compileOptions {
@@ -64,13 +65,19 @@ android {
 }
 
 dependencies {
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("androidx.cardview:cardview:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("net.dankito.readability4j:readability4j:1.0.8")
+
+    // 本地离线中文图片 OCR 识别
     implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
+
+    // 本地网页正文提取 & 网络下载
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jsoup:jsoup:1.17.2")
+    implementation("net.dankito.readability4j:readability4j:1.0.8")
 }
