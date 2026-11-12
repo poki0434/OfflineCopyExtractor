@@ -18,7 +18,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 3. 自动匹配并下载 SenseVoice 模型与 Sherpa-ONNX 引擎
+      - name: 3. 下载 SenseVoice 离线语音模型与 Sherpa-ONNX AAR 引擎
         run: |
           python3 - << 'EOF'
           import os, urllib.request, json, tarfile, shutil
@@ -26,7 +26,7 @@ jobs:
           os.makedirs("app/src/main/assets/sensevoice", exist_ok=True)
           os.makedirs("app/libs", exist_ok=True)
 
-          # 1. 动态查询 asr-models 中最新的 SenseVoice 多语言模型压缩包
+          # 1. 下载 SenseVoice 多语言/中文 int8 量化模型
           req = urllib.request.Request("https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/tags/asr-models", headers={"User-Agent": "Mozilla/5.0"})
           data = json.loads(urllib.request.urlopen(req).read().decode())
           model_url = next(a["browser_download_url"] for a in data["assets"] if "sense-voice-zh-en-ja-ko-yue" in a["name"] and a["name"].endswith(".tar.bz2"))
@@ -39,10 +39,8 @@ jobs:
           shutil.copy(os.path.join(extracted_dir, "model.int8.onnx"), "app/src/main/assets/sensevoice/model.int8.onnx")
           shutil.copy(os.path.join(extracted_dir, "tokens.txt"), "app/src/main/assets/sensevoice/tokens.txt")
 
-          # 2. 动态查询最新版本的 Sherpa-ONNX Android AAR
-          req2 = urllib.request.Request("https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/latest", headers={"User-Agent": "Mozilla/5.0"})
-          data2 = json.loads(urllib.request.urlopen(req2).read().decode())
-          aar_url = next(a["browser_download_url"] for a in data2["assets"] if a["name"].endswith(".aar"))
+          # 2. 从 HuggingFace 官方镜像拉取已编译好的 sherpa-onnx Android AAR
+          aar_url = "https://huggingface.co/csukuangfj/sherpa-onnx-libs/resolve/main/android/sherpa-onnx-1.10.30.aar"
           print("Downloading AAR:", aar_url)
           urllib.request.urlretrieve(aar_url, "app/libs/sherpa-onnx.aar")
           EOF
