@@ -19,6 +19,14 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: 自动补齐 sherpa-onnx 离线引擎库
+        working-directory: ./OfflineCopyExtractor-v2/app
+        run: |
+          mkdir -p libs
+          if [ ! -f libs/sherpa-onnx-1.10.30.aar ]; then
+            curl -L -o libs/sherpa-onnx-1.10.30.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.10.30/sherpa-onnx-1.10.30.aar
+          fi
+
       - name: 生成 Gradle Wrapper 并编译 APK
         working-directory: ./OfflineCopyExtractor-v2
         run: |
