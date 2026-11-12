@@ -100,27 +100,35 @@ class MainActivity : AppCompatActivity() {
         if (rawText.contains("weixin.qq.com") || rawText.contains("channels")) {
             onExtractSuccess(
                 "链接转文字",
-                "提示：微信视频号受微信封闭生态加密保护，外部无法直接抓取直链。\n\n操作建议：在微信内将视频保存至手机相册后，点击首页「视频转文字」即可秒级离线出字。"
+                "提示：微信视频号受微信封闭生态保护，外部浏览器无法直接加载。\n\n操作建议：在微信内将视频保存至手机相册后，点击首页「视频转文字」即可秒级离线出字。"
             )
             return
         }
-        val loading = showLoading("正在模拟桌面浏览器解析并下载视频...")
+
+        // 先打开可视化小窗嗅探，避免全屏 loading 遮挡滑块/登录操作
         lifecycleScope.launch(Dispatchers.IO) {
             val videoFile = WebArticleParser.downloadVideoFromLink(this@MainActivity, rawText)
-            val result = if (videoFile != null) {
-                val wavFile = MediaAudioExtractor.extractTo16kWav(this@MainActivity, Uri.fromFile(videoFile))
-                videoFile.delete()
-                if (wavFile != null) {
-                    val text = asrEngine.transcribeWav(wavFile.absolutePath)
-                    wavFile.delete()
-                    text
-                } else "音轨解析失败"
-            } else {
-                "未能抓取出有效视频流（可能触发了平台滑块验证），建议先保存到相册再使用「视频转文字」。"
-            }
             withContext(Dispatchers.Main) {
-                loading.dismiss()
-                onExtractSuccess("链接转文字", result)
+                if (videoFile == null) {
+                    Toast.makeText(this@MainActivity, "已取消或未获取到视频流", Toast.LENGTH_SHORT).show()
+                    return@withContext
+                }
+                val loading = showLoading("已捕获视频流，正在本地离线转写...")
+                launch(Dispatchers.IO) {
+                    val wavFile = MediaAudioExtractor.extractTo16kWav(this@MainActivity, Uri.fromFile(videoFile))
+                    videoFile.delete()
+                    val result = if (wavFile != null) {
+                        val text = asrEngine.transcribeWav(wavFile.absolutePath)
+                        wavFile.delete()
+                        text
+                    } else {
+                        "音轨解析失败"
+                    }
+                    withContext(Dispatchers.Main) {
+                        loading.dismiss()
+                        onExtractSuccess("链接转文字", result)
+                    }
+                }
             }
         }
     }
