@@ -65,7 +65,7 @@ object WebArticleParser {
     ): File? = suspendCancellableCoroutine { cont ->
         Handler(Looper.getMainLooper()).post {
             var resolved = false
-            val outFile = File(context.cacheDir, "tm_video_${System.currentTimeMillis()}.mp4")
+            var currentFile = File(context.cacheDir, "tm_media_${System.currentTimeMillis()}.mp4")
             var fileStream: FileOutputStream? = null
 
             val cookieManager = CookieManager.getInstance()
@@ -77,7 +77,7 @@ object WebArticleParser {
             }
 
             val tipText = TextView(context).apply {
-                text = "正在加载网页并自动捕获视频流...\n（如遇滑块或登录提示请直接在下方操作，视频播出后将自动关闭窗口）"
+                text = "正在加载网页并识别人声音频流...\n（如遇滑块、登录或视频未自动播放，请直接在下方点击画面播放）"
                 textSize = 13f
                 setPadding(0, 0, 0, 16)
             }
@@ -129,11 +129,19 @@ object WebArticleParser {
                 }
 
                 @JavascriptInterface
+                fun onStartNewFile() {
+                    try { fileStream?.close() } catch (_: Exception) {}
+                    if (currentFile.exists()) currentFile.delete()
+                    currentFile = File(context.cacheDir, "tm_media_${System.currentTimeMillis()}.mp4")
+                    fileStream = FileOutputStream(currentFile)
+                }
+
+                @JavascriptInterface
                 fun onChunk(base64Chunk: String) {
                     if (resolved) return
                     try {
                         if (fileStream == null) {
-                            fileStream = FileOutputStream(outFile)
+                            fileStream = FileOutputStream(currentFile)
                         }
                         val bytes = Base64.decode(base64Chunk, Base64.DEFAULT)
                         fileStream?.write(bytes)
@@ -146,40 +154,41 @@ object WebArticleParser {
                 fun onDownloadComplete() {
                     Handler(Looper.getMainLooper()).post {
                         try { fileStream?.flush(); fileStream?.close() } catch (_: Exception) {}
-                        if (outFile.exists() && outFile.length() > 50 * 1024) {
-                            finishWith(outFile)
+                        fileStream = null
+                        // 必须大于 30KB 才视为有效完整流（过滤初始化空头）
+                        if (currentFile.exists() && currentFile.length() > 30 * 1024) {
+                            finishWith(currentFile)
                         } else {
-                            outFile.delete()
-                            finishWith(null)
+                            currentFile.delete()
                         }
                     }
                 }
 
                 @JavascriptInterface
                 fun onDownloadError(err: String) {
+                    try { fileStream?.close() } catch (_: Exception) {}
+                    fileStream = null
+                    currentFile.delete()
                     Handler(Looper.getMainLooper()).post {
-                        tipText.text = "同源拉流重试中($err)..."
+                        tipText.text = "正在切换下一条媒体流 ($err)..."
                     }
                 }
             }, "AndroidBridge")
 
             dialog = AlertDialog.Builder(context)
-                .setTitle("视频提取窗口")
+                .setTitle("音视频提取窗口")
                 .setView(container)
                 .setNegativeButton("取消提取") { _, _ ->
-                    outFile.delete()
+                    currentFile.delete()
                     finishWith(null)
                 }
                 .setOnCancelListener {
-                    outFile.delete()
+                    currentFile.delete()
                     finishWith(null)
                 }
                 .create()
 
-            // 与控制台验证通过的脚本完全一致：
-            // 1. 读取内嵌状态/video直链
-            // 2. 按时间倒序扫描最新加载的媒体资源及 >300KB 大体积流
-            // 3. 使用不带 credentials 的同源 fetch 规避 CORS 通配符冲突并分片回传本地
+            // 已在本地模拟测试通过的流筛选与下载脚本
             val injectScript = """
                 (function() {
                     if (window.__tmInjected) return;
@@ -192,42 +201,47 @@ object WebArticleParser {
                     } catch(e) {}
 
                     function getCandidates() {
-                        const candidates = [];
+                        const audioList = [];
+                        const videoList = [];
 
-                        // 1. 小红书/通用页面内嵌状态数据
+                        try {
+                            const res = performance.getEntriesByType('resource')
+                                .filter(r => !/uuu_265\.mp4|\/aweme\/v1\/|\/graphql|\.(js|css|png|jpg|jpeg|webp|svg|gif|woff|json)/i.test(r.name))
+                                .filter(r => /douyinvod|bytecdn|volccdn|snssdk|kwimgs|kwaicdn|xhscdn|mime_type=video|mime_type=audio|\.mp4|\.m4a/i.test(r.name) || (r.transferSize && r.transferSize > 80000))
+                                .sort((a, b) => b.startTime - a.startTime);
+
+                            for (const r of res) {
+                                const u = r.name;
+                                if (/mime_type=audio|\.m4a|audio/i.test(u)) {
+                                    audioList.push(u);
+                                } else {
+                                    videoList.push(u);
+                                }
+                            }
+                        } catch (e) {}
+
                         try {
                             const m = window.__INITIAL_STATE__?.note?.noteDetailMap;
                             if (m) {
                                 for (const k in m) {
                                     const v = m[k]?.note?.video;
                                     if (v?.consumer?.originVideoKey) {
-                                        candidates.push('https://sns-video-bd.xhscdn.com/' + v.consumer.originVideoKey);
+                                        videoList.unshift('https://sns-video-bd.xhscdn.com/' + v.consumer.originVideoKey);
                                     } else if (v?.media?.stream?.h264?.[0]?.masterUrl) {
-                                        candidates.push(v.media.stream.h264[0].masterUrl);
+                                        videoList.unshift(v.media.stream.h264[0].masterUrl);
                                     }
                                 }
                             }
                         } catch (e) {}
 
-                        // 2. 当前播放的 <video> 标签直链
                         document.querySelectorAll('video').forEach(v => {
                             const s = v.currentSrc || v.src;
                             if (s && s.startsWith('http') && !s.includes('uuu_265.mp4')) {
-                                candidates.push(s.replace('playwm', 'play'));
+                                videoList.unshift(s.replace('playwm', 'play'));
                             }
                         });
 
-                        // 3. 按加载时间倒序扫描最新的媒体流与 >300KB 大体积资源
-                        try {
-                            const res = performance.getEntriesByType('resource')
-                                .filter(r => !/uuu_265\.mp4|\.(js|css|png|jpg|jpeg|webp|svg|gif|woff|json)/i.test(r.name))
-                                .filter(r => /douyinvod|bytecdn|volccdn|snssdk|kwimgs|kwaicdn|xhscdn|mime_type=video|mime_type=audio|\.mp4|\.m4a/i.test(r.name) || (r.transferSize && r.transferSize > 300000))
-                                .sort((a, b) => b.startTime - a.startTime)
-                                .map(r => r.name);
-                            candidates.push(...res);
-                        } catch (e) {}
-
-                        return [...new Set(candidates)];
+                        return [...new Set([...audioList, ...videoList])];
                     }
 
                     async function tryFetchAndSave(url) {
@@ -240,10 +254,13 @@ object WebArticleParser {
                             const type = head.headers.get('content-type') || '';
                             const len = parseInt(head.headers.get('content-length') || '0', 10);
 
-                            if (len > 50 * 1024 || /video|audio|octet-stream/i.test(type)) {
+                            if (len > 30 * 1024 || /video|audio|octet-stream/i.test(type)) {
                                 window.__tmDownloading = true;
-                                const mb = len > 0 ? (len / 1024 / 1024).toFixed(2) + 'MB' : '未知大小';
-                                AndroidBridge.onStatus("已锁定真实视频流 (" + mb + ")，正在高速下载并转写...");
+                                AndroidBridge.onStartNewFile();
+                                const isAudio = /audio/i.test(type) || /mime_type=audio|\.m4a/i.test(url);
+                                const label = isAudio ? "人声音频流" : "完整音视频流";
+                                const kb = len > 0 ? (len / 1024).toFixed(0) + 'KB' : '未知大小';
+                                AndroidBridge.onStatus("已锁定" + label + " (" + kb + ")，正在下载并离线转写...");
 
                                 const resp = await fetch(url);
                                 if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -258,6 +275,7 @@ object WebArticleParser {
                                     }
                                     AndroidBridge.onChunk(btoa(binary));
                                 }
+                                window.__tmDownloading = false;
                                 AndroidBridge.onDownloadComplete();
                             }
                         } catch (err) {
@@ -269,11 +287,16 @@ object WebArticleParser {
                     setInterval(async () => {
                         if (window.__tmDownloading) return;
                         const list = getCandidates();
+                        const hasAudio = list.some(u => /mime_type=audio|\.m4a|audio/i.test(u));
+                        // 首次发现纯视频流时等待 1.5 秒，给紧随其后加载的 DASH 独立音频流留出出现时间
+                        if (!hasAudio && list.length > 0 && (window.__waitCount = (window.__waitCount || 0) + 1) <= 2) {
+                            return;
+                        }
                         for (const u of list) {
                             if (window.__tmDownloading) break;
                             await tryFetchAndSave(u);
                         }
-                    }, 1000);
+                    }, 900);
                 })();
             """.trimIndent()
 
@@ -286,7 +309,7 @@ object WebArticleParser {
 
             cont.invokeOnCancellation {
                 Handler(Looper.getMainLooper()).post {
-                    outFile.delete()
+                    currentFile.delete()
                     finishWith(null)
                 }
             }
