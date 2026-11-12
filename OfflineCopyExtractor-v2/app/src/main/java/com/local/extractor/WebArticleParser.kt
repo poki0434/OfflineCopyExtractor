@@ -23,7 +23,6 @@ import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import kotlin.coroutines.resume
 
-// 全局诊断日志记录器
 object ExtractLogger {
     private val logs = Collections.synchronizedList(mutableListOf<String>())
     private val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
@@ -91,7 +90,6 @@ object WebArticleParser {
         return extractVideoWithWebView(context, targetUrl)
     }
 
-    // 校验文件头及最小体积（过滤 80KB 以下初始化空壳与 HTML/JSON 错误页）
     private fun isValidMediaFile(file: File): Boolean {
         if (!file.exists() || file.length() < 80 * 1024) return false
         return try {
@@ -100,7 +98,7 @@ object WebArticleParser {
             if (read < 8) return false
             val headStr = String(header, 0, read, Charsets.ISO_8859_1).trimStart()
             if (headStr.startsWith("<") || headStr.startsWith("{") || headStr.contains("html", ignoreCase = true)) {
-                ExtractLogger.log("Verify", "拦截到伪装成媒体的 HTML/JSON 错误响应，前32字节: ${headStr.take(30)}")
+                ExtractLogger.log("Verify", "拦截到伪装成媒体的 HTML/JSON 错误响应")
                 false
             } else {
                 true
@@ -125,21 +123,21 @@ object WebArticleParser {
 
             val container = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(24, 20, 24, 16)
+                setPadding(8, 12, 8, 8)
             }
 
             val tipText = TextView(context).apply {
-                text = "正在加载网页并自动激活播放器捕获人声...\n（支持双指自由缩放，如遇滑块/登录请直接操作）"
-                textSize = 13f
-                setPadding(0, 0, 0, 16)
+                text = "已开启超广角桌面视野（双指可自由放大缩小），如遇登录/滑块请直接操作"
+                textSize = 12f
+                setPadding(12, 0, 12, 10)
             }
 
             val webView = WebView(context).apply {
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    (context.resources.displayMetrics.heightPixels * 0.58).toInt()
+                    (context.resources.displayMetrics.heightPixels * 0.80).toInt()
                 )
-                setInitialScale(65)
+                setInitialScale(42)
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -274,7 +272,7 @@ object WebArticleParser {
                                 meta.name = 'viewport';
                                 document.head.appendChild(meta);
                             }
-                            meta.setAttribute('content', 'width=device-width, initial-scale=0.65, minimum-scale=0.25, maximum-scale=5.0, user-scalable=yes');
+                            meta.setAttribute('content', 'width=device-width, initial-scale=0.42, minimum-scale=0.15, maximum-scale=5.0, user-scalable=yes');
                         } catch (e) {}
                     }
                     unlockViewportZoom();
@@ -448,6 +446,10 @@ object WebArticleParser {
             }
 
             dialog.show()
+            dialog.window?.setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
             webView.loadUrl(targetUrl)
         }
     }

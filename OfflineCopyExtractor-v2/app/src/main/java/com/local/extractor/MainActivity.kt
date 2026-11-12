@@ -2,10 +2,19 @@ package com.local.extractor
 
 import android.app.AlertDialog
 import android.content.*
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.text.TextUtils
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -66,7 +75,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<View>(R.id.btnHistory).setOnClickListener {
-            showHistoryDialog()
+            startActivity(Intent(this, HistoryActivity::class.java))
         }
 
         findViewById<View>(R.id.btnShare).setOnClickListener {
@@ -80,18 +89,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun processMediaUri(uri: Uri, typeName: String) {
         ExtractLogger.clear()
-        ExtractLogger.log("LocalMedia", "开始处理本地文件: $uri")
+        val sourceLabel = "本地相册/文件 (${uri.lastPathSegment ?: uri.toString()})"
         val loading = showLoading("正在本地抽取音轨并离线转写...")
         lifecycleScope.launch(Dispatchers.IO) {
             val wavFile = MediaAudioExtractor.extractTo16kWav(this@MainActivity, uri)
             val result = if (wavFile != null) {
-                ExtractLogger.log("Audio", "WAV 导出成功，大小: ${wavFile.length() / 1024} KB")
                 val text = asrEngine.transcribeWav(wavFile.absolutePath)
                 wavFile.delete()
-                ExtractLogger.log("ASR", "识别完成，字数: ${text.length}")
                 text
             } else {
-                ExtractLogger.log("AudioErr", "MediaAudioExtractor 返回 null")
                 "音频提取失败，请检查文件格式"
             }
             withContext(Dispatchers.Main) {
@@ -99,7 +105,7 @@ class MainActivity : AppCompatActivity() {
                 if (result.startsWith("音频提取失败")) {
                     showExtractError(typeName, result)
                 } else {
-                    onExtractSuccess(typeName, result)
+                    onExtractSuccess(typeName, sourceLabel, result)
                 }
             }
         }
@@ -109,6 +115,7 @@ class MainActivity : AppCompatActivity() {
         if (rawText.contains("weixin.qq.com") || rawText.contains("channels")) {
             onExtractSuccess(
                 "链接转文字",
+                rawText,
                 "提示：微信视频号受微信封闭生态保护，外部浏览器无法直接加载。\n\n操作建议：在微信内将视频保存至手机相册后，点击首页「视频转文字」即可秒级离线出字。"
             )
             return
@@ -123,26 +130,20 @@ class MainActivity : AppCompatActivity() {
                     return@withContext
                 }
                 val videoSizeKb = videoFile.length() / 1024
-                ExtractLogger.log("LinkOK", "收到媒体文件: ${videoFile.name}, 大小: ${videoSizeKb} KB")
                 val loading = showLoading("已捕获媒体流 (${videoSizeKb}KB)，正在本地离线转写...")
                 launch(Dispatchers.IO) {
                     val wavFile = MediaAudioExtractor.extractTo16kWav(this@MainActivity, Uri.fromFile(videoFile))
                     videoFile.delete()
                     if (wavFile == null) {
-                        ExtractLogger.log("AudioErr", "从下载的 ${videoSizeKb}KB 文件中提取音轨失败（可能为无声纯视频轨或格式不支持）")
                         withContext(Dispatchers.Main) {
                             loading.dismiss()
                             showExtractError("链接转文字", "已下载 ${videoSizeKb}KB 文件，但该文件不含有效音轨（可能是无声纯视频轨）。")
                         }
                         return@launch
                     }
-                    val wavSizeKb = wavFile.length() / 1024
                     val durationSec = (wavFile.length() - 44) / 32000.0
-                    ExtractLogger.log("AudioOK", "音轨解码成功，WAV大小: ${wavSizeKb} KB，估算音频时长: ${String.format("%.1f", durationSec)} 秒")
-
                     val text = asrEngine.transcribeWav(wavFile.absolutePath).trim()
                     wavFile.delete()
-                    ExtractLogger.log("ASR", "SenseVoice 原始输出: [$text]")
 
                     withContext(Dispatchers.Main) {
                         loading.dismiss()
@@ -152,7 +153,7 @@ class MainActivity : AppCompatActivity() {
                                 "已下载 ${videoSizeKb}KB 文件（音频时长约 ${String.format("%.1f", durationSec)} 秒），但未识别到有效人声。\n请点击下方「复制错误日志」查看详细原因。"
                             )
                         } else {
-                            onExtractSuccess("链接转文字", text)
+                            onExtractSuccess("链接转文字", rawText, text)
                         }
                     }
                 }
@@ -176,7 +177,7 @@ class MainActivity : AppCompatActivity() {
                 if (result.startsWith("文章解析出错") || result == "网页内容获取失败") {
                     showExtractError("文章转文字", result)
                 } else {
-                    onExtractSuccess("文章转文字", result)
+                    onExtractSuccess("文章转文字", rawText, result)
                 }
             }
         }
@@ -184,6 +185,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun processImageUri(uri: Uri) {
         ExtractLogger.clear()
+        val sourceLabel = "本地相册图片 (${uri.lastPathSegment ?: uri.toString()})"
         val loading = showLoading("正在本地离线识别图片文字...")
         lifecycleScope.launch(Dispatchers.IO) {
             val result = try {
@@ -197,23 +199,144 @@ class MainActivity : AppCompatActivity() {
                 if (result.startsWith("图片识别失败")) {
                     showExtractError("图片转文字", result)
                 } else {
-                    onExtractSuccess("图片转文字", result)
+                    onExtractSuccess("图片转文字", sourceLabel, result)
                 }
             }
         }
     }
 
-    private fun onExtractSuccess(type: String, text: String) {
+    private fun onExtractSuccess(type: String, sourceInfo: String, text: String) {
+        val extractTime = historyDb.insert(type, sourceInfo, text)
         lastExtractedText = text
-        historyDb.insert(type, text)
-        AlertDialog.Builder(this)
-            .setTitle("$type · 提取结果")
-            .setMessage(text)
-            .setPositiveButton("一键复制") { _, _ ->
-                copyToClipboard(text, "已复制到剪贴板")
+        val currentItem = HistoryItem(0, extractTime, type, sourceInfo, text)
+
+        val rootBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40, 24, 40, 16)
+        }
+
+        val timeLine = TextView(this).apply {
+            text = "识别时间：$extractTime   |   $type"
+            textSize = 11.5f
+            setTextColor(Color.parseColor("#86909C"))
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(4, 0, 4, 16)
+        }
+        rootBox.addView(timeLine)
+
+        val scroll = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.heightPixels * 0.55).toInt()
+            )
+        }
+
+        val cardsBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        fun buildCopyableCard(title: String, body: String, isMain: Boolean): LinearLayout {
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(28, 22, 28, 22)
+                background = GradientDrawable().apply {
+                    setColor(if (isMain) Color.parseColor("#F7F8FA") else Color.parseColor("#F0F6FF"))
+                    cornerRadius = 20f
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 20 }
+
+                val header = TextView(this@MainActivity).apply {
+                    text = "$title（长按此板块复制）"
+                    textSize = 12f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#1A73E8"))
+                    setPadding(0, 0, 0, 8)
+                }
+
+                val contentTv = TextView(this@MainActivity).apply {
+                    text = body
+                    textSize = if (isMain) 14.5f else 12.5f
+                    setTextColor(Color.parseColor("#1F2329"))
+                    setLineSpacing(6f, 1.15f)
+                }
+
+                val longClickAction = View.OnLongClickListener {
+                    copyToClipboard(body, "已复制「$title」")
+                    true
+                }
+                setOnLongClickListener(longClickAction)
+                header.setOnLongClickListener(longClickAction)
+                contentTv.setOnLongClickListener(longClickAction)
+
+                addView(header)
+                addView(contentTv)
             }
-            .setNeutralButton("分享") { _, _ -> shareText(text) }
-            .setNegativeButton("关闭", null)
+        }
+
+        cardsBox.addView(buildCopyableCard("原始链接 & 口令", sourceInfo, isMain = false))
+        cardsBox.addView(buildCopyableCard("识别的内容", text, isMain = true))
+        scroll.addView(cardsBox)
+        rootBox.addView(scroll)
+
+        val bottomBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 16, 0, 4)
+        }
+
+        val btnExport = TextView(this).apply {
+            text = "导出文档"
+            textSize = 13.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F9D58"))
+            setPadding(12, 16, 20, 16)
+            setOnClickListener {
+                DocumentExporter.showExportDialog(this@MainActivity, listOf(currentItem))
+            }
+        }
+
+        val spacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        }
+
+        val btnCopyAll = TextView(this).apply {
+            text = "复制全部"
+            textSize = 13.5f
+            setTextColor(Color.parseColor("#4E5969"))
+            setPadding(20, 16, 24, 16)
+            setOnClickListener {
+                val allText = "识别时间：$extractTime\n原始链接：$sourceInfo\n\n$text"
+                copyToClipboard(allText, "已复制全部内容")
+            }
+        }
+
+        val btnCopyMain = TextView(this).apply {
+            text = "一键复制正文"
+            textSize = 13.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1A73E8"))
+                cornerRadius = 16f
+            }
+            setPadding(28, 16, 28, 16)
+            setOnClickListener {
+                copyToClipboard(text, "已一键复制识别正文")
+            }
+        }
+
+        bottomBar.addView(btnExport)
+        bottomBar.addView(spacer)
+        bottomBar.addView(btnCopyAll)
+        bottomBar.addView(btnCopyMain)
+        rootBox.addView(bottomBar)
+
+        AlertDialog.Builder(this)
+            .setView(rootBox)
             .show()
     }
 
@@ -262,21 +385,6 @@ class MainActivity : AppCompatActivity() {
                 if (text.isNotEmpty()) onConfirm(text)
             }
             .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun showHistoryDialog() {
-        val items = historyDb.getAll()
-        if (items.isEmpty()) {
-            Toast.makeText(this, "暂无历史记录", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val titles = items.map { "[${it.time}] ${it.type}：${it.content.take(20)}..." }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("历史记录")
-            .setItems(titles) { _, which ->
-                onExtractSuccess(items[which].type, items[which].content)
-            }
             .show()
     }
 

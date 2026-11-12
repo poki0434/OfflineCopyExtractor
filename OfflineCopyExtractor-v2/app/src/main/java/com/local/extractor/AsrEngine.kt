@@ -36,7 +36,6 @@ class AsrEngine(private val context: Context) {
         val samples = readWavToFloatArray(wavPath)
         if (samples.isEmpty()) return ""
 
-        // 按每段 20 秒（320,000 采样点）切片识别，防止长音频超出 SenseVoice 单次编码窗口导致只输出 "."
         val chunkSize = 16000 * 20
         val sb = StringBuilder()
         var offset = 0
